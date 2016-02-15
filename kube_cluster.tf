@@ -4,35 +4,36 @@ provider "aws" {
   region = "${var.region}"
 }
 
+
 resource "aws_iam_role" "master_role" {
-  name = "master_role"
+  name = "kubernetes_master_role"
   assume_role_policy = "${file("iam/kubernetes-master-role.json")}"
 }
 
 resource "aws_iam_role_policy" "master_policy" {
-  name = "master_policy"
+  name = "kubernetes_master_policy"
   role = "${aws_iam_role.master_role.id}"
   policy = "${file("iam/kubernetes-master-policy.json")}"
 }
 
 resource "aws_iam_instance_profile" "master_profile" {
-  name = "master_profile"
+  name = "kubernetes_master_profile"
   roles = ["${aws_iam_role.master_role.name}"]
 }
 
 resource "aws_iam_role" "worker_role" {
-  name = "worker_role"
+  name = "kubernetes_worker_role"
   assume_role_policy = "${file("iam/kubernetes-worker-role.json")}"
 }
 
 resource "aws_iam_role_policy" "worker_policy" {
-  name = "worker_policy"
+  name = "kubernetes_worker_policy"
   role = "${aws_iam_role.worker_role.id}"
   policy = "${file("iam/kubernetes-worker-policy.json")}"
 }
 
 resource "aws_iam_instance_profile" "worker_profile" {
-  name = "worker_profile"
+  name = "kubernetes_worker_profile"
   roles = ["${aws_iam_role.worker_role.name}"]
 }
 
@@ -109,12 +110,13 @@ resource "aws_security_group" "kube_cluster" {
     protocol = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+  vpc_id = "${var.vpc_id}"
 }
 
-resource "aws_key_pair" "ssh_key" {
-  key_name = "ssh_key"
-  public_key = "${var.ssh_public_key}"
-}
+#resource "aws_key_pair" "ssh_key" {
+#  key_name = "${var.ssh_key_pair_name}"
+#  public_key = "${var.ssh_public_key}"
+#}
 
 resource "template_file" "cloud_init" {
   template = "${file("coreos/cloud_init.yaml.tpl")}"
@@ -124,12 +126,12 @@ resource "template_file" "cloud_init" {
 }
 
 resource "aws_elb" "kube_master" {
-  name = "kube-master"
+  name = "${var.name_prefix}-kube-master"
 
   subnets = ["${aws_instance.master.*.subnet_id}"]
   security_groups = ["${aws_security_group.kube_cluster.id}"]
   instances = ["${aws_instance.master.*.id}"]
-
+  internal = "${var.elb_internal}"
   listener {
     instance_port = 443
     instance_protocol = "tcp"
@@ -179,10 +181,14 @@ resource "aws_instance" "master" {
     volume_type = "gp2"
     volume_size = "${var.master_volume_size}"
   }
-  security_groups = ["${aws_security_group.kube_cluster.name}"]
   iam_instance_profile = "${aws_iam_instance_profile.master_profile.name}"
   user_data = "${template_file.cloud_init.rendered}"
-  key_name = "${aws_key_pair.ssh_key.key_name}"
+  key_name = "${var.ssh_key_pair_name}"
+  vpc_security_group_ids = ["${var.vpc_security_group_id}", "${aws_security_group.kube_cluster.id}"]
+  subnet_id = "${var.subnet_id}"
+  tags {
+    Name = "${var.name_prefix}-kube-master"
+  }
 }
 
 resource "null_resource" "master" {
@@ -196,7 +202,7 @@ resource "null_resource" "master" {
   }
 
   connection {
-    host = "${element(aws_instance.master.*.public_ip, count.index)}"
+    host = "${element(aws_instance.master.*.private_ip, count.index)}"
     type = "ssh"
     user = "core"
     private_key = "${file(var.ssh_private_key_path)}"
@@ -227,7 +233,7 @@ resource "null_resource" "master" {
       "sudo chmod 600 /etc/kubernetes/ssl/*-key.pem",
       "sudo chown root:root /etc/kubernetes/ssl/*-key.pem",
       "sudo mkdir -p /opt/bin",
-      "sudo curl -L -o /opt/bin/kubelet https://storage.googleapis.com/kubernetes-release/release/v1.2.0-alpha.5/bin/linux/amd64/kubelet",
+      "sudo curl -L -o /opt/bin/kubelet https://storage.googleapis.com/kubernetes-release/release/${var.kube_version}/bin/linux/amd64/kubelet",
       "sudo chmod +x /opt/bin/kubelet",
       "ETCD_ENDPOINTS=${self.triggers.etcd_endpoints}",
       "ETCD_SERVER=${self.triggers.etcd_server}",
@@ -278,9 +284,13 @@ resource "aws_instance" "worker" {
     volume_type = "gp2"
     volume_size = "${var.worker_volume_size}"
   }
-  security_groups = ["${aws_security_group.kube_cluster.name}"]
   iam_instance_profile = "${aws_iam_instance_profile.worker_profile.name}"
-  key_name = "${aws_key_pair.ssh_key.key_name}"
+  key_name = "${var.ssh_key_pair_name}"
+  vpc_security_group_ids = ["${var.vpc_security_group_id}", "${aws_security_group.kube_cluster.id}"]
+  subnet_id = "${var.subnet_id}"
+  tags {
+    Name = "${var.name_prefix}-kube-worker"
+  }
 }
 
 resource "null_resource" "worker" {
@@ -293,7 +303,7 @@ resource "null_resource" "worker" {
   }
 
   connection {
-    host = "${element(aws_instance.worker.*.public_ip, count.index)}"
+    host = "${element(aws_instance.worker.*.private_ip, count.index)}"
     type = "ssh"
     user = "core"
     private_key = "${file(var.ssh_private_key_path)}"
@@ -324,7 +334,7 @@ resource "null_resource" "worker" {
       "sudo chmod 600 /etc/kubernetes/ssl/*-key.pem",
       "sudo chown root:root /etc/kubernetes/ssl/*-key.pem",
       "sudo mkdir -p /opt/bin",
-      "sudo curl -L -o /opt/bin/kubelet https://storage.googleapis.com/kubernetes-release/release/v1.2.0-alpha.5/bin/linux/amd64/kubelet",
+      "sudo curl -L -o /opt/bin/kubelet https://storage.googleapis.com/kubernetes-release/release/${var.kube_version}/bin/linux/amd64/kubelet",
       "sudo chmod +x /opt/bin/kubelet",
       "MASTER_HOST=${aws_elb.kube_master.dns_name}",
       "ETCD_ENDPOINTS=${self.triggers.etcd_endpoints}",
