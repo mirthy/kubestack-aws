@@ -7,7 +7,7 @@ spec:
   hostNetwork: true
   containers:
   - name: kube-proxy
-    image: gcr.io/google_containers/hyperkube:<KUBE_VERSION>
+    image: gcr.io/google_containers/hyperkube-amd64:<KUBE_VERSION>
     command:
     - /hyperkube
     - proxy

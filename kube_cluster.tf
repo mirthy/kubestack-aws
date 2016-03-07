@@ -349,7 +349,7 @@ resource "null_resource" "worker" {
       "sudo mkdir -p /etc/systemd/system/docker.service.d",
       "sudo mv /tmp/40-flannel.conf /etc/systemd/system/docker.service.d/40-flannel.conf",
       "sed -i \"s|<MASTER_HOST>|$MASTER_HOST|g\" /tmp/kubelet.service",
-      "sed -i \"s|<ADVERTISE_DNS>|$ADVERTISE_DNS|g\" /tmp/kubelet.service",
+      "sed -i \"s|<ADVERTISE_DNS>|$ADVERTISE_IP|g\" /tmp/kubelet.service",
       "sudo mv /tmp/kubelet.service /etc/systemd/system/kubelet.service",
       "sed -i 's|<KUBE_VERSION>|${var.kube_version}|g' /tmp/kube-proxy.yaml",
       "sed -i \"s|<MASTER_HOST>|$MASTER_HOST|g\" /tmp/kube-proxy.yaml",
